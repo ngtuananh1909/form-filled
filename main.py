@@ -38,9 +38,15 @@ def extract_question_label(question_node: Locator) -> str:
         '[data-params*="question"]',
     ]
     for selector in selectors:
-        candidate = _normalize_text(question_node.locator(selector).first.inner_text(timeout=500))
-        if candidate:
-            return candidate
+        locator = question_node.locator(selector)
+        if locator.count() == 0:
+            continue
+        try:
+            candidate = _normalize_text(locator.first.inner_text(timeout=500))
+            if candidate:
+                return candidate
+        except Exception:
+            continue
 
     node_text = _normalize_text(question_node.inner_text(timeout=1000))
     return node_text.split("\n")[0] if node_text else ""
@@ -114,6 +120,7 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
 
 def build_ai_prompt(questions: Sequence[Dict[str, Any]]) -> str:
+    """Builds a strict JSON-output prompt for Gemini using the static user profile and parsed form questions."""
     return (
         "Bạn là trợ lý điền Google Form. "
         "Dựa trên USER_PROFILE và danh sách câu hỏi, trả về DUY NHẤT JSON object theo dạng "
@@ -127,7 +134,7 @@ def build_ai_prompt(questions: Sequence[Dict[str, Any]]) -> str:
 
 def ask_gemini(questions: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     if not AI_CONFIG.api_key:
-        raise RuntimeError("Thiếu GEMINI_API_KEY trong .env")
+        raise RuntimeError("Missing GEMINI_API_KEY in .env")
 
     configure_kwargs: Dict[str, Any] = {"api_key": AI_CONFIG.api_key}
     if AI_CONFIG.api_base:
@@ -139,7 +146,7 @@ def ask_gemini(questions: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     response = model.generate_content(prompt)
     output_text = (response.text or "").strip()
     if not output_text:
-        raise RuntimeError("Gemini không trả về nội dung")
+        raise RuntimeError("Gemini returned empty content")
 
     return _extract_json(output_text)
 
@@ -223,7 +230,7 @@ def launch_context() -> BrowserContext:
 
 def main() -> None:
     if not FORM_URL:
-        raise RuntimeError("Thiếu FORM_URL trong .env")
+        raise RuntimeError("Missing FORM_URL in .env")
 
     context = launch_context()
     page = context.pages[0] if context.pages else context.new_page()
