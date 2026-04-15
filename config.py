@@ -4,19 +4,21 @@ from typing import Dict, Any
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 @dataclass(frozen=True)
 class AIConfig:
-    model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    model: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
     api_key: str = os.getenv("GEMINI_API_KEY", "")
     api_base: str = os.getenv("GEMINI_API_BASE", "")
 
 
 USER_PROFILE: Dict[str, Any] = {
-    "ho_ten": "Nguyen Tuan Anh",
+    "ho_ten": "Nguyễn Tuấn Anh",
     "mssv": "52500028",
+    "email": "52500028@student.tdtu.edu.vn",
+    "sdt": "0799389161",
     "chuyen_nganh": "Kỹ thuật phần mềm",
     "truong": "Đại học Tôn Đức Thắng",
     "ky_nang": [

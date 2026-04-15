@@ -217,43 +217,76 @@ def fill_form(page: Page, questions: Sequence[Dict[str, Any]], answers: Dict[str
         _random_sleep(0.6, 1.8)
 
 
-def launch_context() -> BrowserContext:
+def main(url: Optional[str] = None) -> bool:
+    target_url = url or FORM_URL
+    if not target_url:
+        print("[ERROR] Missing FORM_URL in .env and no URL provided")
+        return False
+
     USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    playwright = sync_playwright().start()
-    return playwright.chromium.launch_persistent_context(
-        user_data_dir=str(USER_DATA_DIR),
-        headless=HEADLESS,
-        args=["--disable-blink-features=AutomationControlled"],
-        viewport={"width": 1400, "height": 900},
-    )
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=str(USER_DATA_DIR),
+            headless=HEADLESS,
+            args=["--disable-blink-features=AutomationControlled"],
+            viewport={"width": 1400, "height": 900},
+        )
+        page = context.pages[0] if context.pages else context.new_page()
 
+        try:
+            page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+            _random_sleep(1.0, 2.0)
 
-def main() -> None:
-    if not FORM_URL:
-        raise RuntimeError("Missing FORM_URL in .env")
+            # Check if we are at Google Login page
+            if "accounts.google.com" in page.url or page.locator('input[type="email"]').count() > 0:
+                print("[!] Phát hiện trang đăng nhập Google. Vui lòng thực hiện đăng nhập trong trình duyệt...")
+                print("[!] Bot sẽ tự động tiếp tục sau khi bạn vào được trang Form.")
+                try:
+                    # Wait longer for the form to appear after login (up to 5 minutes)
+                    page.wait_for_selector('div[role="listitem"]', timeout=300000)
+                    print("[INFO] Đã đăng nhập thành công hoặc đã vào được Form.")
+                except Exception:
+                    print("[ERROR] Quá thời gian chờ đăng nhập. Vui lòng chạy lại script.")
+                    return False
 
-    context = launch_context()
-    page = context.pages[0] if context.pages else context.new_page()
+            page_count = 1
+            while True:
+                print(f"--- Đang xử lý trang {page_count} ---")
+                questions = parse_form_questions(page)
+                if questions:
+                    print("[INFO] Parsed questions:", json.dumps(questions, ensure_ascii=False, indent=2))
+                    answers = ask_gemini(questions)
+                    print("[INFO] AI answers:", json.dumps(answers, ensure_ascii=False, indent=2))
+                    fill_form(page, questions, answers)
+                    _random_sleep(1.0, 2.0)
+                
+                # Tìm nút "Tiếp" hoặc "Next"
+                next_btn = page.locator('div[role="button"]').filter(has_text=re.compile(r"^(Tiếp|Next)$", re.IGNORECASE))
+                if next_btn.count() > 0:
+                    print(f"[INFO] Bấm nút Tiếp tục...")
+                    next_btn.first.click()
+                    page.wait_for_timeout(3000)
+                    page_count += 1
+                else:
+                    print("[INFO] Đã đến trang cuối cùng của Form.")
+                    submit_btn = page.locator('div[role="button"]').filter(has_text=re.compile(r"^(Gửi|Submit)$", re.IGNORECASE))
+                    if submit_btn.count() > 0:
+                        print("[INFO] Đang tiến hành Auto Submit...")
+                        submit_btn.first.click()
+                        page.wait_for_timeout(4000)
+                        print("[INFO] Đã Submit Form thành công!")
+                    break
 
-    try:
-        page.goto(FORM_URL, wait_until="domcontentloaded", timeout=60000)
-        _random_sleep(1.0, 2.0)
-
-        questions = parse_form_questions(page)
-        print("[INFO] Parsed questions:", json.dumps(questions, ensure_ascii=False, indent=2))
-
-        answers = ask_gemini(questions)
-        print("[INFO] AI answers:", json.dumps(answers, ensure_ascii=False, indent=2))
-
-        fill_form(page, questions, answers)
-        _random_sleep(1.0, 2.0)
-
-        screenshot_path = Path("form_filled_preview.png")
-        page.screenshot(path=str(screenshot_path), full_page=True)
-        print(f"[INFO] Preview screenshot saved: {screenshot_path.resolve()}")
-        print("[INFO] Hoàn tất điền form. Vui lòng kiểm tra trước khi bấm Submit.")
-    finally:
-        context.close()
+            screenshot_path = Path(f"form_filled_preview_{page_count}.png")
+            page.screenshot(path=str(screenshot_path), full_page=True)
+            print(f"[INFO] Preview screenshot saved: {screenshot_path.resolve()}")
+            print("[INFO] Hoàn tất điền form.")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Quá trình điền form thất bại: {e}")
+            return False
+        finally:
+            context.close()
 
 
 if __name__ == "__main__":
