@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+user_data/
+form_filled_preview.png
