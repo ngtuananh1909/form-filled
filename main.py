@@ -269,7 +269,12 @@ def main(url: Optional[str] = None) -> bool:
                     page_count += 1
                 else:
                     print("[INFO] Đã đến trang cuối cùng của Form.")
-                    submit_btn = page.locator('div[role="button"]').filter(has_text=re.compile(r"^(Gửi|Submit)$", re.IGNORECASE))
+                    submit_btn = page.locator('div[role="button"]').filter(has_text=re.compile(r"Gửi|Submit", re.IGNORECASE))
+                    if submit_btn.count() == 0:
+                        # Fallback: match by aria-label
+                        submit_btn = page.locator(
+                            'div[role="button"][aria-label*="Gửi"], div[role="button"][aria-label*="Submit"]'
+                        )
                     if submit_btn.count() > 0:
                         print("[INFO] Đang tiến hành Auto Submit...")
                         submit_btn.first.click()
