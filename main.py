@@ -15,10 +15,25 @@ from config import AI_CONFIG, USER_PROFILE
 FORM_URL = os.getenv("FORM_URL", "")
 USER_DATA_DIR = Path(os.getenv("USER_DATA_DIR", "./user_data"))
 HEADLESS = os.getenv("HEADLESS", "false").strip().lower() == "true"
+RUN_MODE = os.getenv("RUN_MODE", "accuracy").strip().lower()  # "accuracy" or "spam"
 
 
 def _random_sleep(min_seconds: float = 0.4, max_seconds: float = 1.2) -> None:
     time.sleep(random.uniform(min_seconds, max_seconds))
+
+
+def _scroll_to_bottom(page: Page) -> None:
+    """Thực hiện cuộn chuột dần dần để tải toàn bộ các câu hỏi bị Lazy Load."""
+    print("[INFO] Đang cuộn trang để tải toàn bộ câu hỏi...")
+    last_height = page.evaluate("document.body.scrollHeight")
+    while True:
+        page.mouse.wheel(0, 1500)
+        page.wait_for_timeout(600)
+        new_height = page.evaluate("document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
+    page.wait_for_timeout(1000)
 
 
 def _normalize_text(value: str) -> str:
@@ -62,7 +77,7 @@ def extract_option_text(option_node: Locator) -> str:
 
 
 def detect_question_type(question_node: Locator) -> str:
-    if question_node.locator('input[type="text"]').count() > 0 or question_node.locator("textarea").count() > 0:
+    if question_node.locator('input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), textarea').count() > 0:
         return "text"
     if question_node.locator('[role="radio"]').count() > 0:
         return "radio"
@@ -71,13 +86,69 @@ def detect_question_type(question_node: Locator) -> str:
     return "unknown"
 
 
+def extract_row_label(row_node: Locator) -> str:
+    # Lấy text của ô đầu tiên trong hàng (thường là nội dung câu hỏi của hàng đó)
+    try:
+        cell = row_node.locator('div[role="rowheader"]')
+        if cell.count() > 0:
+            return _normalize_text(cell.first.inner_text(timeout=500))
+    except Exception:
+        pass
+    
+    # Fallback: đọc trực tiếp inner_text của hàng
+    text = _normalize_text(row_node.inner_text(timeout=500))
+    if text:
+        return text.split("\n")[0]
+    return ""
+
+
 def parse_form_questions(page: Page) -> List[Dict[str, Any]]:
-    page.wait_for_selector('div[role="listitem"]', timeout=15000)
+    # Cuộn trang trước để lazy load tất cả
+    _scroll_to_bottom(page)
+    
+    try:
+        page.wait_for_selector('div[role="listitem"]', timeout=5000)
+    except Exception:
+        print("[INFO] Trang này không có câu hỏi nào (hoặc đã lỗi tải). Tiếp tục xử lý...")
+        return []
+
     questions: List[Dict[str, Any]] = []
 
     listitems = page.locator('div[role="listitem"]')
     for i in range(listitems.count()):
         node = listitems.nth(i)
+        
+        # Nhận diện lưới (Grid/Matrix)
+        rows = node.locator('div[role="row"]')
+        if rows.count() > 1:
+            parent_label = extract_question_label(node)
+            for r in range(rows.count()):
+                row_node = rows.nth(r)
+                if row_node.locator('[role="radio"]').count() > 0 or row_node.locator('[role="checkbox"]').count() > 0:
+                    qtype = "radio" if row_node.locator('[role="radio"]').count() > 0 else "checkbox"
+                    row_label = extract_row_label(row_node)
+                    full_label = f"{parent_label} - {row_label}" if row_label else f"{parent_label} (Row {r})"
+                    
+                    options: List[str] = []
+                    role_selector = '[role="radio"]' if qtype == "radio" else '[role="checkbox"]'
+                    role_nodes = row_node.locator(role_selector)
+                    for j in range(role_nodes.count()):
+                        opt_text = extract_option_text(role_nodes.nth(j))
+                        if opt_text:
+                            options.append(opt_text)
+
+                    questions.append({
+                        "index": i,
+                        "row_index": r,
+                        "is_grid": True,
+                        "key": _safe_key(full_label, len(questions)),
+                        "label": full_label,
+                        "type": qtype,
+                        "options": options,
+                    })
+            continue # Đã xử lý xong dạng Grid cho listitem này
+
+        # Xử lý câu hỏi bình thường
         qtype = detect_question_type(node)
         if qtype == "unknown":
             continue
@@ -96,7 +167,8 @@ def parse_form_questions(page: Page) -> List[Dict[str, Any]]:
         questions.append(
             {
                 "index": i,
-                "key": _safe_key(label, i),
+                "is_grid": False,
+                "key": _safe_key(label, len(questions)),
                 "label": label,
                 "type": qtype,
                 "options": options,
@@ -126,6 +198,7 @@ def build_ai_prompt(questions: Sequence[Dict[str, Any]]) -> str:
         "Dựa trên USER_PROFILE và danh sách câu hỏi, trả về DUY NHẤT JSON object theo dạng "
         '{"label_câu_hỏi": "câu_trả_lời"}. '
         "Với checkbox nhiều lựa chọn: trả về mảng string. "
+        "YÊU CẦU BẮT BUỘC: Bạn PHẢI trả lời TẤT CẢ các câu hỏi có trong danh sách. Nếu không có thông tin chắc chắn, hãy tự suy luận một câu trả lời tự nhiên và hợp lý tuyệt đối không bỏ trống.\n"
         "Không thêm giải thích.\n\n"
         f"USER_PROFILE:\n{json.dumps(USER_PROFILE, ensure_ascii=False, indent=2)}\n\n"
         f"QUESTIONS:\n{json.dumps(list(questions), ensure_ascii=False, indent=2)}"
@@ -177,27 +250,59 @@ def _type_like_human(field: Locator, text: str) -> None:
         field.type(ch, delay=random.randint(35, 120))
 
 
-def fill_form(page: Page, questions: Sequence[Dict[str, Any]], answers: Dict[str, Any]) -> None:
+def get_spam_answers(questions: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Generate random answers without calling AI. Only handles radio/checkbox."""
+    answers: Dict[str, Any] = {}
+    for q in questions:
+        if q["type"] == "radio" and q["options"]:
+            answers[q["label"]] = random.choice(q["options"])
+        elif q["type"] == "checkbox" and q["options"]:
+            k = random.randint(1, len(q["options"]))
+            answers[q["label"]] = random.sample(q["options"], k)
+        # text fields are intentionally skipped in spam mode
+    return answers
+
+
+def fill_form(page: Page, questions: Sequence[Dict[str, Any]], answers: Dict[str, Any], fast: bool = False) -> None:
     listitems = page.locator('div[role="listitem"]')
 
     for q in questions:
         answer = answers.get(q["label"])
         if answer is None:
             answer = answers.get(q["key"])
-        if answer is None:
-            continue
-
+        
         node = listitems.nth(q["index"])
+        
+        # Nếu là câu hỏi Grid, ta trỏ tới đích danh hàng (row) đó
+        if q.get("is_grid"):
+            rows = node.locator('div[role="row"]')
+            row_idx = q.get("row_index", 0)
+            if row_idx < rows.count():
+                node = rows.nth(row_idx)
+
         qtype = q["type"]
 
         if qtype == "text":
-            field = node.locator("textarea, input[type='text']").first
-            _type_like_human(field, str(answer))
+            # Đảm bảo test/text fields luôn được điền kể cả khi AI quên hoặc trong chế độ spam
+            if answer is None:
+                answer = "Không có thông tin" if not fast else "ok"
 
-        elif qtype == "radio":
+            field = node.locator("textarea, input:not([type='hidden']):not([type='radio']):not([type='checkbox'])").first
+            if field.count() > 0:
+                if fast:
+                    field.click()
+                    field.fill(str(answer))
+                else:
+                    _type_like_human(field, str(answer))
+
+        if answer is None:
+            continue
+
+        if qtype == "radio":
             target = _find_matching_option(node, '[role="radio"]', str(answer))
             if target:
-                target.click()
+                target.scroll_into_view_if_needed()
+                target.click(force=True)
 
         elif qtype == "checkbox":
             selected_values: List[str]
@@ -211,17 +316,24 @@ def fill_form(page: Page, questions: Sequence[Dict[str, Any]], answers: Dict[str
             for value in selected_values:
                 target = _find_matching_option(node, '[role="checkbox"]', value)
                 if target:
-                    target.click()
-                    _random_sleep(0.2, 0.7)
+                    target.scroll_into_view_if_needed()
+                    target.click(force=True)
+                    if not fast:
+                        _random_sleep(0.1, 0.4)
 
-        _random_sleep(0.6, 1.8)
+        if not fast:
+            _random_sleep(0.3, 0.8)
 
 
-def main(url: Optional[str] = None) -> bool:
+def main(url: Optional[str] = None, mode: Optional[str] = None) -> bool:
+    run_mode = mode or RUN_MODE
+    is_spam = run_mode == "spam"
     target_url = url or FORM_URL
     if not target_url:
         print("[ERROR] Missing FORM_URL in .env and no URL provided")
         return False
+
+    print(f"[MODE] {'🚀 SPAM (Nhanh & Nhiều)' if is_spam else '🎯 ACCURACY (Chính xác cao)'}")
 
     USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
@@ -235,14 +347,14 @@ def main(url: Optional[str] = None) -> bool:
 
         try:
             page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
-            _random_sleep(1.0, 2.0)
+            if not is_spam:
+                _random_sleep(1.0, 2.0)
 
             # Check if we are at Google Login page
             if "accounts.google.com" in page.url or page.locator('input[type="email"]').count() > 0:
                 print("[!] Phát hiện trang đăng nhập Google. Vui lòng thực hiện đăng nhập trong trình duyệt...")
                 print("[!] Bot sẽ tự động tiếp tục sau khi bạn vào được trang Form.")
                 try:
-                    # Wait longer for the form to appear after login (up to 5 minutes)
                     page.wait_for_selector('div[role="listitem"]', timeout=300000)
                     print("[INFO] Đã đăng nhập thành công hoặc đã vào được Form.")
                 except Exception:
@@ -254,11 +366,16 @@ def main(url: Optional[str] = None) -> bool:
                 print(f"--- Đang xử lý trang {page_count} ---")
                 questions = parse_form_questions(page)
                 if questions:
-                    print("[INFO] Parsed questions:", json.dumps(questions, ensure_ascii=False, indent=2))
-                    answers = ask_gemini(questions)
-                    print("[INFO] AI answers:", json.dumps(answers, ensure_ascii=False, indent=2))
-                    fill_form(page, questions, answers)
-                    _random_sleep(1.0, 2.0)
+                    if is_spam:
+                        answers = get_spam_answers(questions)
+                        print(f"[SPAM] Chọn ngẫu nhiên {len(answers)} câu")
+                    else:
+                        print("[INFO] Parsed questions:", json.dumps(questions, ensure_ascii=False, indent=2))
+                        answers = ask_gemini(questions)
+                        print("[INFO] AI answers:", json.dumps(answers, ensure_ascii=False, indent=2))
+                    fill_form(page, questions, answers, fast=is_spam)
+                    if not is_spam:
+                        _random_sleep(1.0, 2.0)
                 
                 # Tìm nút "Tiếp" hoặc "Next"
                 next_btn = page.locator('div[role="button"]').filter(has_text=re.compile(r"^(Tiếp|Next)$", re.IGNORECASE))

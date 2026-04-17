@@ -15,13 +15,13 @@ class AIConfig:
 
 
 USER_PROFILE: Dict[str, Any] = {
-    "ho_ten": "Nguyễn Tuấn Anh",
-    "mssv": "52500028",
-    "email": "52500028@student.tdtu.edu.vn",
-    "sdt": "0799389161",
-    "lop": "25050201",
-    "chuyen_nganh": "Kỹ thuật phần mềm",
-    "truong": "Đại học Tôn Đức Thắng",
+    "ho_ten": "Your Name",
+    "mssv": "Your Student ID",
+    "email": "Your Email",
+    "sdt": "Your Phone Number",
+    "lop": "Your Class",
+    "chuyen_nganh": "Your Major",
+    "truong": "Your University",
     "ky_nang": [
         "Python",
         "Playwright",
