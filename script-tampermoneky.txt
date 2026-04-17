@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Google Form Auto Spam - V14 (RANDOMIZER)
+// @name         Google Form Auto Spam
 // @namespace    http://tampermonkey.net/
 // @version      14.0
 // @description  Tự động random đáp án Trắc nghiệm và Text, kết hợp né mìn hoàn hảo
