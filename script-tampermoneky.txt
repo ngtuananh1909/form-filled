@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Google Form Auto Spam
+// @name         Google Form Auto Spam (V35.0 - Ultimate Next & Submit)
 // @namespace    http://tampermonkey.net/
-// @version      14.0
-// @description  Tự động random đáp án Trắc nghiệm và Text, kết hợp né mìn hoàn hảo
+// @version      35.0
+// @description  Xử đẹp cả nút Tiếp và nút Gửi bằng thuật toán quét ngược, chống bấm Xóa/Quay lại, dùng PointerEvent qua mặt jsaction
 // @match        *://docs.google.com/forms/*
 // @grant        none
 // ==/UserScript==
@@ -10,61 +10,85 @@
 (function() {
     'use strict';
 
+    let isWaitingToSubmit = false;
+
+    // 1. Kho dữ liệu
+    function generateVietnameseName() {
+        const ho = ["Nguyễn", "Trần", "Lê", "Phạm", "Hoàng", "Huỳnh", "Phan", "Vũ", "Võ", "Đặng", "Bùi", "Đỗ", "Lý"];
+        const dem = ["Văn", "Thị", "Ngọc", "Hoàng", "Tuấn", "Minh", "Thanh", "Xuân", "Hữu", "Đức", "Gia", "Thành", "Đình", "Quang"];
+        const ten = ["Anh", "Vũ", "Quang", "Phát", "Huy", "Khang", "Bảo", "Linh", "Trang", "Phương", "Thảo", "Hùng", "Cường", "Khoa", "Đạt", "Nhi", "Mai"];
+        return `${ho[Math.floor(Math.random()*ho.length)]} ${dem[Math.floor(Math.random()*dem.length)]} ${ten[Math.floor(Math.random()*ten.length)]}`;
+    }
+
+    function generateStudentID() {
+        const prefixes = ["21", "22", "23", "24"];
+        const prefix = prefixes[Math.floor(Math.random()*prefixes.length)];
+        const suffix = Math.floor(100000 + Math.random()*900000).toString();
+        return prefix + suffix;
+    }
+
+    function generateGender() {
+        return Math.random() < 0.5 ? "Nam" : "Nữ";
+    }
+
+    // 2. Hàm giả lập Click chuẩn y hệt người thật (Bypass jsaction của Google)
     function nukeClick(element) {
         if (!element) return;
 
+        // Cuộn mượt mà tới giữa màn hình để tránh bị các thẻ div khác che khuất (overlap)
         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
+        // Đợi 150ms cho animation cuộn hoàn tất rồi mới click
         setTimeout(() => {
-            element.focus();
-            const events = [
-                new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window }),
-                new PointerEvent('pointerdown', { bubbles: true, cancelable: true }),
-                new MouseEvent('mousedown', { bubbles: true, cancelable: true, buttons: 1, view: window }),
-                new PointerEvent('pointerup', { bubbles: true, cancelable: true }),
-                new MouseEvent('mouseup', { bubbles: true, cancelable: true, buttons: 1, view: window }),
-                new MouseEvent('click', { bubbles: true, cancelable: true, view: window }),
-                new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-                new KeyboardEvent('keyup', { key: 'Enter', bubbles: true, cancelable: true })
-            ];
+            const pointerOptions = { bubbles: true, cancelable: true, pointerType: "mouse", buttons: 1, isPrimary: true };
+            const mouseOptions = { bubbles: true, cancelable: true, view: window, buttons: 1 };
 
-            events.forEach(ev => element.dispatchEvent(ev));
-        }, 200);
+            // Hành động 1: Nhấn chuột xuống
+            element.dispatchEvent(new PointerEvent('pointerdown', pointerOptions));
+            element.dispatchEvent(new MouseEvent('mousedown', mouseOptions));
+
+            // Hành động 2: Nhả chuột ra và Click (Cách nhau 50ms để giống người dùng thật)
+            setTimeout(() => {
+                element.dispatchEvent(new PointerEvent('pointerup', pointerOptions));
+                element.dispatchEvent(new MouseEvent('mouseup', mouseOptions));
+                element.dispatchEvent(new MouseEvent('click', mouseOptions));
+
+                // Backup bằng hàm click mặc định đề phòng
+                element.click();
+            }, 50);
+
+        }, 150);
     }
 
+    // 3. Vòng lặp chính quét mỗi 0.8 giây
     setInterval(() => {
+        if (isWaitingToSubmit) return;
+
         let isFillingRightNow = false;
 
-        // 1. Bấm nút "Gửi phản hồi khác"
+        // ==========================================
+        // MÀN HÌNH CUỐI: BẤM LẶP LẠI (Gửi phản hồi khác)
+        // ==========================================
         let links = document.querySelectorAll('a');
         for (let a of links) {
             let txt = a.textContent.toLowerCase();
             if (txt.includes('khác') || txt.includes('another')) {
                 nukeClick(a);
+                isWaitingToSubmit = true;
+                setTimeout(() => { isWaitingToSubmit = false; }, 2000);
                 return;
             }
         }
 
-        // 2. Điền Text NGẪU NHIÊN
-        // Bạn có thể sửa các chữ trong ngoặc kép này theo ý muốn
-        const randomTexts = ["Hoàn toàn đồng ý", "Đồng ý", "Bình thường", "Rất tốt", "Không có ý kiến", "Tuyệt vời", "Khá ổn"];
-
-        document.querySelectorAll('input[type="text"], textarea').forEach(t => {
-            if (t.offsetParent !== null && !t.value) {
-                // Bốc ngẫu nhiên 1 câu trong mảng randomTexts
-                let pickedText = randomTexts[Math.floor(Math.random() * randomTexts.length)];
-                t.value = pickedText;
-                t.dispatchEvent(new Event('input', { bubbles: true }));
-                isFillingRightNow = true;
-            }
-        });
-
-        // 3. Click Radio NGẪU NHIÊN (Trắc nghiệm 1 lựa chọn)
+        // ==========================================
+        // XỬ LÝ TRẮC NGHIỆM (Né Mục khác)
+        // ==========================================
         document.querySelectorAll('div[role="radiogroup"]').forEach(group => {
             if (group.offsetParent !== null && !group.querySelector('div[aria-checked="true"]')) {
-                let radios = group.querySelectorAll('div[role="radio"]');
+                let radios = Array.from(group.querySelectorAll('div[role="radio"]')).filter(r => {
+                    return r.getAttribute('data-value') !== '__other_option__';
+                });
                 if (radios.length > 0) {
-                    // Tung xúc xắc chọn 1 vị trí bất kỳ
                     let randomRadio = radios[Math.floor(Math.random() * radios.length)];
                     nukeClick(randomRadio);
                     isFillingRightNow = true;
@@ -72,12 +96,13 @@
             }
         });
 
-        // 4. Click Checkbox NGẪU NHIÊN (Trắc nghiệm nhiều lựa chọn)
         document.querySelectorAll('div[role="listitem"]').forEach(item => {
             if (item.offsetParent !== null) {
-                let checkboxes = item.querySelectorAll('div[role="checkbox"]');
+                let checkboxes = Array.from(item.querySelectorAll('div[role="checkbox"]')).filter(c => {
+                    let txt = c.innerText.toLowerCase();
+                    return !txt.includes('khác') && !txt.includes('other');
+                });
                 if (checkboxes.length > 0 && !item.querySelector('div[aria-checked="true"]')) {
-                    // Để nhanh gọn, bot bốc ngẫu nhiên 1 ô checkbox để tick
                     let randomCheckbox = checkboxes[Math.floor(Math.random() * checkboxes.length)];
                     nukeClick(randomCheckbox);
                     isFillingRightNow = true;
@@ -85,57 +110,89 @@
             }
         });
 
+        // ==========================================
+        // XỬ LÝ ĐIỀN TEXT
+        // ==========================================
+        const randomTexts = ["Hoàn toàn đồng ý", "Rất đồng ý", "Bình thường", "Tốt", "Không có ý kiến thêm"];
+
+        document.querySelectorAll('input[type="text"], textarea').forEach(t => {
+            let isOtherOptionInput = (t.getAttribute('aria-label') === 'Câu trả lời khác') || (t.closest('.pIDwKe') !== null);
+            if (isOtherOptionInput) return;
+
+            if (t.offsetParent !== null && !t.value) {
+                let contextText = "";
+                let questionBlock = t.closest('.geS5n');
+                if (questionBlock) {
+                    let headingEl = questionBlock.querySelector('[role="heading"]');
+                    if (headingEl) contextText = headingEl.innerText.toLowerCase();
+                }
+
+                let pickedText = "";
+
+                if (contextText.includes('mssv') || contextText.includes('mã sinh viên') || contextText.includes('student id')) {
+                    pickedText = generateStudentID();
+                } else if (contextText.includes('tên') || contextText.includes('name') || contextText.includes('họ và')) {
+                    pickedText = generateVietnameseName();
+                } else if (contextText.includes('giới tính') || contextText.includes('gender')) {
+                    pickedText = generateGender();
+                } else {
+                    pickedText = randomTexts[Math.floor(Math.random() * randomTexts.length)];
+                }
+
+                t.focus();
+                t.value = pickedText;
+                t.dispatchEvent(new Event('input', { bubbles: true }));
+                t.dispatchEvent(new Event('change', { bubbles: true }));
+                isFillingRightNow = true;
+            }
+        });
+
         if (isFillingRightNow) return;
 
         // ==========================================
-        // 5. TÌM NÚT (LƯỚI LỌC TỬ THẦN NÉ QUAY LẠI VÀ XÓA FORM)
+        // TÌM VÀ BẤM NÚT (TIẾP / GỬI) - ƯU TIÊN JSNAME CỦA GOOGLE
         // ==========================================
         let targetBtn = null;
 
-        let buttons = document.querySelectorAll('div[role="button"]');
-        for (let b of buttons) {
-            if (b.offsetParent !== null && b.getAttribute('aria-disabled') !== 'true') {
-                let txt = b.innerText.trim().toLowerCase();
+        // Tuyệt chiêu 1: Bắt thẳng nút Gửi (Submit) bằng jsname gốc của Google
+        let directSubmitBtn = document.querySelector('div[role="button"][jsname="M2UYVd"]');
+        if (directSubmitBtn && directSubmitBtn.offsetParent !== null && directSubmitBtn.getAttribute('aria-disabled') !== 'true') {
+            targetBtn = directSubmitBtn;
+        }
+        else {
+            // Tuyệt chiêu 2: Nếu chưa đến trang cuối, dùng thuật toán quét ngược tìm nút Tiếp (Next)
+            let buttons = Array.from(document.querySelectorAll('div[role="button"]'));
+            for (let i = buttons.length - 1; i >= 0; i--) {
+                let b = buttons[i];
+                if (b.offsetParent !== null && b.getAttribute('aria-disabled') !== 'true') {
+                    let txt = b.innerText.trim().toLowerCase();
+                    let ariaLabel = (b.getAttribute('aria-label') || "").trim().toLowerCase();
 
-                if (txt.includes('quay lại') || txt.includes('back') || txt.includes('xóa') || txt.includes('clear')) {
-                    continue;
-                }
+                    // Lưới lọc: Né nút Quay Lại / Xóa
+                    if (txt.includes('quay lại') || txt.includes('back') || txt.includes('xóa') || txt.includes('clear') ||
+                        ariaLabel.includes('quay lại') || ariaLabel.includes('xóa')) {
+                        continue;
+                    }
 
-                if (txt === 'tiếp' || txt === 'next' || txt === 'gửi' || txt === 'submit') {
-                    targetBtn = b;
-                    break;
+                    // Chốt mục tiêu: Tìm nút Tiếp
+                    if (txt.includes('tiếp') || txt.includes('next') || ariaLabel.includes('tiếp') || ariaLabel.includes('next')) {
+                        targetBtn = b;
+                        break;
+                    }
                 }
             }
         }
 
         if (targetBtn) {
-            console.log("🔥 [BOT] Đã chốt đúng nút GỬI/TIẾP bằng Text!");
+            console.log("🚀 [BOT] Đã chốt hạ nút: " + (targetBtn.innerText.toUpperCase() || "SUBMIT/NEXT"));
+            isWaitingToSubmit = true;
             nukeClick(targetBtn);
 
-            let coreSpan = targetBtn.querySelector('span.NPEfkd');
-            if (coreSpan) nukeClick(coreSpan);
-
-        } else {
-            let actionButtons = Array.from(document.querySelectorAll('div[role="button"][jsaction*="click:cOuCgd"], div[role="button"][jscontroller="VXdfxd"]'));
-            let visibleBtns = actionButtons.filter(b => b.offsetParent !== null && b.getAttribute('aria-disabled') !== 'true');
-
-            if (visibleBtns.length > 0) {
-                let realSubmitBtn = null;
-
-                if (visibleBtns.length >= 3) {
-                    realSubmitBtn = visibleBtns[1];
-                } else if (visibleBtns.length === 2) {
-                    realSubmitBtn = visibleBtns[0];
-                } else {
-                    realSubmitBtn = visibleBtns[0];
-                }
-
-                if (realSubmitBtn) {
-                    console.log("🎯 [BOT] JSACTION: Đã khóa mục tiêu an toàn!");
-                    nukeClick(realSubmitBtn);
-                }
-            }
+            // Tăng thời gian chờ lên 2.5 giây để Google kịp process API gửi dữ liệu
+            setTimeout(() => {
+                isWaitingToSubmit = false;
+            }, 2500);
         }
 
-    }, 500);
+    }, 800);
 })();
