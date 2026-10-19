@@ -8,7 +8,7 @@ __pycache__/
 user_data/
 form_filled_preview.png
 form_filled_preview_*.png
-links.txt   
+links.txt
 config.py
 form_runs.sqlite3*
 .pytest_cache/

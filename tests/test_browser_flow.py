@@ -114,6 +114,22 @@ def test_hidden_confirmation_marker_cannot_confirm_submission(browser_page):
     assert main._is_confirmation(browser_page) is False
 
 
+def test_unavailable_and_confirmation_handle_locator_timeout_gracefully(browser_page, monkeypatch):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    real_locator = browser_page.locator
+
+    def fake_locator(selector):
+        loc = real_locator(selector)
+        if selector == "body":
+            monkeypatch.setattr(loc, "inner_text", lambda **_kw: (_ for _ in ()).throw(PlaywrightTimeoutError("Timeout 1000ms exceeded")))
+        return loc
+
+    monkeypatch.setattr(browser_page, "locator", fake_locator)
+    assert main._unavailable(browser_page) is False
+    assert main._is_confirmation(browser_page) is False
+
+
 def test_provider_error_cannot_persist_private_response_text(browser_page, monkeypatch, capsys):
     html = '<div role="listitem"><div role="heading">Question</div><input type="text"></div>'
     browser_page.route(TEST_URL, lambda route: route.fulfill(body=html, content_type="text/html"))

@@ -565,37 +565,52 @@ def _page_issues(page: Page) -> dict[str, str]:
 
 
 def _visible_error(page: Page) -> bool:
-    errors = page.locator('[role="alert"], [aria-invalid="true"], [class*="ErrorMessage"]')
-    return any(errors.nth(i).is_visible() for i in range(min(errors.count(), 30)))
+    try:
+        errors = page.locator('[role="alert"], [aria-invalid="true"], [class*="ErrorMessage"]')
+        return any(errors.nth(i).is_visible() for i in range(min(errors.count(), 30)))
+    except Exception:
+        return False
 
 
 def _button(page: Page, words: str) -> Optional[Locator]:
-    pattern = re.compile(rf"^(?:{words})$", re.IGNORECASE)
-    buttons = page.locator('div[role="button"], button').filter(has_text=pattern)
-    for i in range(buttons.count()):
-        candidate = buttons.nth(i)
-        if candidate.is_visible() and candidate.is_enabled():
-            return candidate
+    try:
+        pattern = re.compile(rf"^(?:{words})$", re.IGNORECASE)
+        buttons = page.locator('div[role="button"], button').filter(has_text=pattern)
+        for i in range(buttons.count()):
+            candidate = buttons.nth(i)
+            if candidate.is_visible() and candidate.is_enabled():
+                return candidate
+    except Exception:
+        return None
     return None
 
 
 def _login_prompt_visible(page: Page) -> bool:
-    prompts = page.locator('a, button, div[role="button"]').filter(
-        has_text=re.compile(r"^(?:Đăng nhập|Sign in)$", re.IGNORECASE)
-    )
-    return any(prompts.nth(i).is_visible() for i in range(prompts.count()))
+    try:
+        prompts = page.locator('a, button, div[role="button"]').filter(
+            has_text=re.compile(r"^(?:Đăng nhập|Sign in)$", re.IGNORECASE)
+        )
+        return any(prompts.nth(i).is_visible() for i in range(prompts.count()))
+    except Exception:
+        return False
 
 
 def _form_ready(page: Page) -> bool:
-    if (urlparse(page.url).hostname or "").lower() != "docs.google.com":
+    try:
+        if (urlparse(page.url).hostname or "").lower() != "docs.google.com":
+            return False
+        if _login_prompt_visible(page):
+            return False
+        return page.locator('div[role="listitem"]').count() > 0 or _button(page, "Tiếp|Next|Gửi|Submit") is not None
+    except Exception:
         return False
-    if _login_prompt_visible(page):
-        return False
-    return page.locator('div[role="listitem"]').count() > 0 or _button(page, "Tiếp|Next|Gửi|Submit") is not None
 
 
 def _unavailable(page: Page) -> bool:
-    body = _normalize_text(page.locator("body").inner_text(timeout=1000)).casefold()
+    try:
+        body = _normalize_text(page.locator("body").inner_text(timeout=1000)).casefold()
+    except Exception:
+        return False
     return any(message in body for message in (
         "no longer accepting responses", "không còn chấp nhận câu trả lời",
         "không còn chấp nhận phản hồi", "bạn cần có quyền truy cập", "you need access",
@@ -615,7 +630,11 @@ def wait_for_form(page: Page, on_state: StateCallback) -> Optional[RunResult]:
             print("[LOGIN] Hãy đăng nhập tài khoản SV trong trình duyệt. Bot sẽ chờ đến khi form hiện ra.")
             on_state("awaiting_login", "Chờ đăng nhập")
             announced = True
-        page.wait_for_timeout(500)
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            if page.is_closed():
+                return RunResult(RunStatus.CANCELLED, "", "Trình duyệt đã đóng")
 
 
 def _fingerprint(page: Page) -> str:
@@ -633,13 +652,19 @@ def _fingerprint(page: Page) -> str:
 def _is_confirmation(page: Page) -> bool:
     if page.is_closed():
         return False
-    text = _normalize_text(page.locator("body").inner_text(timeout=1000)).casefold()
+    try:
+        text = _normalize_text(page.locator("body").inner_text(timeout=1000)).casefold()
+    except Exception:
+        text = ""
     known_text = any(value in text for value in (
         "your response has been recorded", "your response has been submitted",
         "câu trả lời của bạn đã được ghi lại", "phản hồi của bạn đã được ghi lại",
     ))
-    markers = page.locator('[class*="ConfirmationMessage"], [data-confirmation="true"]')
-    confirmation = any(markers.nth(i).is_visible() for i in range(markers.count()))
+    try:
+        markers = page.locator('[class*="ConfirmationMessage"], [data-confirmation="true"]')
+        confirmation = any(markers.nth(i).is_visible() for i in range(markers.count()))
+    except Exception:
+        confirmation = False
     return (known_text or confirmation) and _button(page, "Gửi|Submit") is None
 
 
@@ -682,7 +707,11 @@ def _wait_for_submit(page: Page, url: str) -> RunResult:
                 return RunResult(RunStatus.UNKNOWN, url, "Rời form nhưng không thấy xác nhận gửi")
         else:
             disappeared_at = None
-        page.wait_for_timeout(500)
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            if page.is_closed():
+                return RunResult(RunStatus.UNKNOWN, url, "Trang đóng khi đang chờ xác nhận gửi")
 
 
 def run_form(page: Page, url: str, on_state: StateCallback = lambda *_: None,
