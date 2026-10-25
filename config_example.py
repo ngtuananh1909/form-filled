@@ -26,3 +26,5 @@ USER_PROFILE: Dict[str, Any] = {
     "du_an": [],
     "muc_tieu": "",
 }
+
+AI_CONFIG = AIConfig()
