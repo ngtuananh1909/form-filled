@@ -1,27 +1,41 @@
-import os
-from dotenv import load_dotenv
-import google.generativeai as genai
+"""Optional manual check for the configured AI provider."""
 
-load_dotenv()
+import main as form_main
 
-from dotenv import find_dotenv
-env_path = find_dotenv()
-print(f"--- Đang load file .env từ: {env_path} ---")
 
-api_key = os.getenv("GEMINI_API_KEY")
-model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+def _health_check_questions() -> list[dict[str, object]]:
+    return [{
+        "id": "health", "label": "Chọn chính xác đáp án OK để kiểm tra kết nối", "type": "radio",
+        "options": ["OK", "FAILED"],
+        "choices": [{"id": "o0", "label": "OK"}, {"id": "o1", "label": "FAILED"}],
+    }]
 
-print(f"--- Đang kiểm tra API Key: {api_key[:10]}...{api_key[-5:] if api_key else ''} ---")
-print(f"--- Model: {model_name} ---")
 
-if not api_key:
-    print("[ERROR] Không tìm thấy GEMINI_API_KEY trong file .env")
-else:
+def _provider_model() -> str:
+    if form_main.AI_PROVIDER == "openrouter":
+        return form_main.OPENROUTER_MODEL
+    if form_main.AI_PROVIDER == "openai_compatible":
+        return form_main.OPENAI_COMPATIBLE_MODEL
+    return getattr(form_main.AI_CONFIG, "model", "").strip() or "gemini-flash-latest"
+
+
+def main() -> int:
+    original_profile = form_main.USER_PROFILE
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content("Hello, can you hear me?")
-        print("[SUCCESS] API Key hoạt động bình thường!")
-        print(f"Phản hồi từ Gemini: {response.text}")
-    except Exception as e:
-        print(f"[FAILED] Lỗi API: {e}")
+        form_main.USER_PROFILE = {}
+        questions = _health_check_questions()
+        answers = form_main.ask_ai(questions)
+        accepted, issues = form_main.validate_answers(questions, answers)
+        if issues or not accepted:
+            raise RuntimeError(f"Phản hồi không hợp lệ: {issues}")
+        print(f"[OK] {form_main.AI_PROVIDER}: {_provider_model()}")
+        return 0
+    except Exception as exc:
+        print(f"[ERROR] {form_main.AI_PROVIDER}: {exc}")
+        return 1
+    finally:
+        form_main.USER_PROFILE = original_profile
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,19 @@
+name: tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: cp config_example.py config.py
+      - run: python -m compileall -q main.py bulk_runner.py discord_bridge.py profile_mapping.py
+      - run: python -m pytest -q
+        env:
+          REQUIRE_BROWSER_TESTS: '1'

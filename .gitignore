@@ -8,12 +8,14 @@ __pycache__/
 user_data/
 form_filled_preview.png
 form_filled_preview_*.png
-links.txt   
+links.txt
 config.py
-test_*.py
+form_runs.sqlite3*
+.pytest_cache/
+.venv/
 .vscode/
 .idea/
-venv/
+.venv/
 env/
 .DS_Store
 node_modules/
